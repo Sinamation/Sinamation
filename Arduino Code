@@ -1,0 +1,501 @@
+
+#include <SPI.h>
+#include <Ethernet.h>
+#include <RCSwitch.h>
+#include <avr/pgmspace.h>
+
+RCSwitch mySwitch = RCSwitch();
+
+//***********************************************************************
+
+#define LED_PIN 8
+#define BUZZ_PIN 4
+
+// BLINDS Control definitions
+
+#define RF_DATA_PIN 10
+#define SHORT_DELAY 200  /* 500 but reduced to 200 because of overheads */
+#define LONG_DELAY  (3*SHORT_DELAY)
+#define SYNC_DELAY  (24*SHORT_DELAY)
+
+// BLINDS Code Arrays
+
+const char sysId[]           PROGMEM  = "10100011000011011000001101011";
+
+const char common_zeros[]    PROGMEM  = "00000000";
+const char common_ones[]     PROGMEM  = "11111111";
+
+const char bId_1[]           PROGMEM  = "00000000001";
+const char bId_2[]           PROGMEM  = "00000000010";
+const char bId_3[]           PROGMEM  = "00000000100";
+const char bId_4[]           PROGMEM  = "00000001000";
+const char bId_5[]           PROGMEM  = "00000010000";
+const char bId_6[]           PROGMEM  = "00000100000";
+const char bId_7[]           PROGMEM  = "00001000000";
+const char bId_8[]           PROGMEM  = "00010000000";
+const char bId_ALL[]         PROGMEM  = "00011111111";
+
+const char commandUp_1[]     PROGMEM  = "00001011111101001";
+const char commandStop_1[]   PROGMEM  = "00100011000011001";
+const char commandDown_1[]   PROGMEM  = "00100100000011011";
+const char commandUp_2[]     PROGMEM  = "00001011111101011";
+const char commandStop_2[]   PROGMEM  = "00100011000011011";
+const char commandDown_2[]   PROGMEM  = "00100100000011101";
+const char commandUp_3[]     PROGMEM  = "00001011111101111";
+const char commandStop_3[]   PROGMEM  = "00100011000011111";
+const char commandDown_3[]   PROGMEM  = "00100011000011111";
+const char commandUp_4[]     PROGMEM  = "00001011111110111";
+const char commandStop_4[]   PROGMEM  = "00100011000100111";
+const char commandDown_4[]   PROGMEM  = "01000011001100111";
+const char commandUp_5[]     PROGMEM  = "00001011000000111";
+const char commandStop_5[]   PROGMEM  = "00100011000110111";
+const char commandDown_5[]   PROGMEM  = "01000011001110111";
+const char commandUp_6[]     PROGMEM  = "00001011000100111";
+const char commandStop_6[]   PROGMEM  = "00100011001010111";
+const char commandDown_6[]   PROGMEM  = "01000011010010111";
+const char commandUp_7[]     PROGMEM  = "00001011001100111";
+const char commandStop_7[]   PROGMEM  = "00100011010010111";
+const char commandDown_7[]   PROGMEM  = "01000011011010111";
+const char commandUp_8[]     PROGMEM  = "00001011011100111";
+const char commandStop_8[]   PROGMEM  = "00100011100010111";
+const char commandDown_8[]   PROGMEM  = "01000011101010111";
+const char commandUp_ALL[]   PROGMEM  = "00001011111100011";
+const char commandStop_ALL[] PROGMEM  = "00100011000010011";
+const char commandDown_ALL[] PROGMEM  = "01000011001010011";
+
+// Array look-up tables
+
+const char* const sysId_table[]     PROGMEM ={sysId};
+
+const char* const common_table[]    PROGMEM ={common_zeros, common_ones};
+
+const char* const bId_table[]       PROGMEM ={bId_1, bId_2, bId_3, bId_4, bId_5, bId_6, bId_7, bId_8, bId_ALL};
+
+const char* const command_table[]   PROGMEM ={commandUp_1, commandStop_1, commandDown_1, commandUp_2, commandStop_2, commandDown_2, commandUp_3, commandStop_3, commandDown_3, commandUp_4, commandStop_4, commandDown_4, commandUp_5, commandStop_5, commandDown_5, commandUp_6, commandStop_6, commandDown_6, commandUp_7, commandStop_7, commandDown_7, commandUp_8, commandStop_8, commandDown_8, commandUp_ALL, commandStop_ALL, commandDown_ALL};
+
+/* 
+Look-up tables register numbers:
+
+Blinds ID:
+
+1 = 0 ** 2 = 1 ** 3 = 2 ** 4 = 3
+5 = 4 ** 6 = 5 ** 7 = 6 ** 8 = 7
+A = 8
+
+Commands:
+
+1_Up = 0 ** 1_Stop = 1 ** 1_Down = 2
+2_Up = 3 ** 2_Stop = 4 ** 2_Down = 5
+3_Up = 6 ** 3_Stop = 7 ** 3_Down = 8
+4_Up = 9 ** 4_Stop =10 ** 4_Down =11
+5_Up =12 ** 5_Stop =13 ** 5_Down =14
+6_Up =15 ** 6_Stop =16 ** 6_Down =17
+7_Up =18 ** 7_Stop =19 ** 7_Down =20
+8_Up =21 ** 8_Stop =22 ** 8_Down =23
+A_Up =24 ** A_Stop =25 ** A_Down =26
+
+*/
+
+char bin;
+
+// End of BLINDS Control definitions
+//***********************************************************************
+
+// MAC address Set-up 00-04-A3-9E-B9-9A, IP reserved on Router at 192.168.0.110
+
+byte mac[] = { 
+  0x00, 0x04, 0xA3, 0x9E, 0xB9, 0x9A };
+
+EthernetServer server(8080);
+
+String readString; 
+
+void setup(){
+  
+  int b = 0;
+  
+  /*for(b=0;b<2;b++) {
+  
+    digitalWrite(LED_PIN, HIGH);
+    tone(BUZZ_PIN, 1500, 100);
+    delay(200);
+    digitalWrite(LED_PIN, LOW);
+    tone(BUZZ_PIN, 500, 100);
+    delay(200);
+    digitalWrite(LED_PIN, HIGH);
+    tone(BUZZ_PIN, 800, 100);
+    delay(200);
+    digitalWrite(LED_PIN, LOW); 
+  } */
+  
+  digitalWrite(LED_PIN, LOW);
+  mySwitch.enableTransmit(10);
+
+  //start Ethernet
+  Ethernet.begin(mac);
+  server.begin();
+
+ //enable serial data print for debugging - keep commented if operational
+ Serial.begin(9600); 
+ // Serial.println("Arduino Client Started");
+  
+  // Pull the trasmit pin down (Required by the BLINDS Control Sequence)
+  digitalWrite(RF_DATA_PIN, LOW);  
+}
+
+void loop(){
+  // Create a client connection
+  EthernetClient client = server.available();
+  if (client) {
+    while (client.connected()) {
+      if (client.available()) {
+        char c = client.read();
+        
+        //read char by char HTTP request
+        if (readString.length() < 30) {
+
+        //store characters to string 
+        readString += c; 
+        } 
+        
+        // Flash the LED
+        
+         digitalWrite(LED_PIN, HIGH);
+        //delay(100);
+
+        // if HTTP request has ended check the command received from the node.js server
+        if (c == '-') {
+            
+        // BLINDS CONTROLS - 1st FLOOR
+                             
+        if (readString == "b4u-"){
+          rf_send(0, 3, 9);
+          }
+          else if (readString == "b4s-"){
+          rf_send(0, 3,10);
+          }
+          else if (readString == "b4d-"){
+          rf_send(0, 3,11);
+          }
+          else if (readString == "b3u-"){
+          rf_send(0, 2, 6);
+          }
+          else if (readString == "b3s-"){
+          rf_send(0, 2, 7);
+          }        
+          else if (readString == "b3d-"){
+          rf_send(0, 2, 8);
+          }
+          else if (readString == "b2u-"){
+          rf_send(0, 1, 3);
+          }
+          else if (readString == "b2s-"){
+          rf_send(0, 1, 4);
+          }
+          else if (readString == "b2d-"){
+          rf_send(0, 1, 5);
+          }
+          else if (readString == "b1u-"){
+          rf_send(0, 0, 0);
+          }
+          else if (readString == "b1s-"){
+          rf_send(0, 0, 1);
+          }
+          else if (readString == "b1d-"){
+          rf_send(0, 0, 2);
+          }
+          else if (readString == "buAu-"){
+          autoBlinds("upALLup");
+          }
+          else if (readString == "buAs-"){
+          autoBlinds("upALLstop");
+          }
+          else if (readString == "buAd-"){
+          autoBlinds("upALLdown");
+          }
+            
+          // BLINDS CONTROLS - 1st FLOOR
+            
+          else if (readString == "b8u-"){
+          rf_send(0, 7,21);
+          }          
+          else if (readString == "b8s-"){
+          rf_send(0, 7,22);
+          }
+          else if (readString == "b8d-"){
+          rf_send(0, 7,23);
+          }
+          else if (readString == "b7u-"){
+          rf_send(0, 6,18);
+          }          
+          else if (readString == "b7s-"){
+          rf_send(0, 6,19);
+          }
+          else if (readString == "b7d-"){
+          rf_send(0, 6,20);
+          }
+          else if (readString == "b6u-"){
+          rf_send(0, 5,15);
+          }
+          else if (readString == "b6s-"){
+          rf_send(0, 5,16);
+          }
+          else if (readString == "b6d-"){
+          rf_send(0, 5,17);
+          }
+          else if (readString == "b5u-"){
+          rf_send(0, 4,12);
+          }
+          else if (readString == "b5s-"){
+          rf_send(0, 4,13);
+          }
+          else if (readString == "b5d-"){
+          rf_send(0, 4,14);
+          }
+          else if (readString == "bdAu-"){
+          autoBlinds("downALLup");
+          }
+          else if (readString == "bdAs-"){
+          autoBlinds("downALLstop");
+          }
+          else if (readString == "bdAd-"){
+          autoBlinds("downALLdown");
+          }
+          else if (readString == "bALLu-"){
+          rf_send(1, 8,24);
+          }
+          else if (readString == "bALLs-"){
+          rf_send(1, 8,25);
+          }
+          else if (readString == "bALLd-"){
+          rf_send(1, 8,26);
+          }
+          else if (readString == "SUNp-"){
+          autoBlinds("sunProtect");
+          }
+            
+          // POWERPOINTS Set 1
+            
+          else if (readString == "ON11-"){
+            
+          // This is a special action connected to the InSinkerator //
+          
+          tone(BUZZ_PIN, 1000, 500);
+          digitalWrite(LED_PIN, HIGH); 
+          delay(500);
+          digitalWrite(LED_PIN, LOW);
+          delay(500);
+          tone(BUZZ_PIN, 1000, 500);
+          digitalWrite(LED_PIN, HIGH);
+          delay(500);
+          digitalWrite(LED_PIN, LOW);
+          delay(500); 
+          tone(BUZZ_PIN, 1000, 1000);
+          digitalWrite(LED_PIN, HIGH);
+          delay(1000);
+          digitalWrite(LED_PIN, LOW);   
+          mySwitch.send(155914165, 32);
+          }
+          else if (readString == "OFF11-"){
+          mySwitch.send(155912125, 32);
+          }
+          else if (readString == "ON12-"){
+          mySwitch.send(155913139, 32);
+          }
+          else if (readString == "OFF12-"){
+          mySwitch.send(155911099, 32);
+          }
+          else if (readString == "ON13-"){
+          mySwitch.send(155913655, 32);
+          }
+          else if (readString == "OFF13-"){
+          mySwitch.send(155911615, 32);
+          }
+          else if (readString == "ON14-"){
+          mySwitch.send(155913908, 32);
+          }
+          else if (readString == "OFF14-"){
+          mySwitch.send(155911868, 32);
+          }          
+          else if (readString == "ON21-"){
+          mySwitch.send(210210751, 32);
+          Serial.println("pwt21ON");
+          }
+          else if (readString == "OFF21-"){
+          mySwitch.send(210208688, 32);
+          Serial.println("pwt21OFF");
+          }
+          else if (readString == "ON22-"){
+          mySwitch.send(210209720, 32);
+          }
+          else if (readString == "OFF22-"){
+          mySwitch.send(210207668, 32);
+          }
+          else if (readString == "ON23-"){
+          mySwitch.send(210210236, 32);
+          }
+          else if (readString == "OFF23-"){
+          mySwitch.send(210208178, 32);
+          }
+          else if (readString == "ON24-"){
+          mySwitch.send(210210494, 32);
+          }
+          else if (readString == "OFF24-"){
+          mySwitch.send(210208433, 32);
+          }  
+         
+         digitalWrite(LED_PIN, LOW); 
+            
+        // clearing string for next read 
+            
+        readString=""; 
+        client.stop();
+        }
+      }
+    }
+ }  
+}
+
+// ********************* FUNCTIONS ********************* //
+
+// Blinds code builder and sender
+
+void rf_send( int common, int blindsId, int blindsCommand) {
+    
+  // Read blinds codes back from PROGMEM
+    
+  char sysId_buffer[39]; 
+  char bId_buffer[21];   
+  char common_buffer[18];
+  char command_buffer[27];
+    
+  strcpy_P(sysId_buffer, (char*)pgm_read_word(&(sysId_table[0])));
+  strcpy_P(common_buffer, (char*)pgm_read_word(&(common_table[common])));
+  strcpy_P(bId_buffer, (char*)pgm_read_word(&(bId_table[blindsId])));
+  strcpy_P(command_buffer, (char*)pgm_read_word(&(command_table[blindsCommand])));
+        
+  String blindsCode = String(sysId_buffer) + String(bId_buffer) + String(common_buffer) + String(command_buffer);
+  
+  int r;
+  int r2;
+  int k;
+  int d;
+  
+  // send Code 3 Times then delay then again three times //
+  
+  for(r=0;r<2;r++){
+    for(r2=0;r2<3;r2++){
+        digitalWrite(RF_DATA_PIN, HIGH);
+        delayMicroseconds(SYNC_DELAY);
+        digitalWrite(RF_DATA_PIN, LOW);
+        delayMicroseconds(LONG_DELAY);
+  
+        for(k=0;k<65;k++) {
+            bin = blindsCode.charAt(k);
+    
+            int d = bin - '0';
+            if(d==1){
+                digitalWrite(RF_DATA_PIN, HIGH);    
+                delayMicroseconds(LONG_DELAY);
+                digitalWrite(RF_DATA_PIN, LOW);
+                delayMicroseconds(SHORT_DELAY);
+
+            } else if(d==0){
+                digitalWrite(RF_DATA_PIN, HIGH);    
+                delayMicroseconds(SHORT_DELAY); 
+                digitalWrite(RF_DATA_PIN, LOW);
+                delayMicroseconds(LONG_DELAY);   
+            }
+        }
+    }
+    digitalWrite(RF_DATA_PIN, LOW);
+    delayMicroseconds(SYNC_DELAY);
+  }
+}
+
+// Blinds Automation functions
+
+void autoBlinds(String AutoCode)
+{
+  
+  if (AutoCode == "upALLup")
+  {
+    rf_send(0, 3, 9);
+    delayMicroseconds(200);
+    rf_send(0, 2, 6);
+    delayMicroseconds(200);
+    rf_send(0, 1, 3);
+    delayMicroseconds(200);
+    rf_send(0, 0, 0);
+  }
+  else if (AutoCode == "upALLstop")
+  {
+    rf_send(0, 3,10);
+    delayMicroseconds(200);
+    rf_send(0, 2, 7);
+    delayMicroseconds(200);
+    rf_send(0, 1, 4);
+    delayMicroseconds(200);
+    rf_send(0, 0, 1);
+  }
+  else if (AutoCode == "upALLdown")
+  {
+    rf_send(0, 3,11);
+    delayMicroseconds(200);
+    rf_send(0, 2, 8);
+    delayMicroseconds(200);
+    rf_send(0, 1, 5);
+    delayMicroseconds(200);
+    rf_send(0, 0, 2);
+  }
+  else if (AutoCode == "downALLup")
+  {
+    rf_send(0, 7,21);
+    delayMicroseconds(200);
+    rf_send(0, 6,18);
+    delayMicroseconds(200);
+    rf_send(0, 5,15);
+    delayMicroseconds(200);
+    rf_send(0, 4,12);
+  }
+  else if (AutoCode == "downALLstop")
+  {
+    rf_send(0, 7,22);
+    delayMicroseconds(200);
+    rf_send(0, 6,19);
+    delayMicroseconds(200);
+    rf_send(0, 5,16);
+    delayMicroseconds(200);
+    rf_send(0, 4,13);
+  }
+  else if (AutoCode == "downALLdown")
+  {
+    rf_send(0, 7,23);
+    delayMicroseconds(200);
+    rf_send(0, 6,20);
+    delayMicroseconds(200);
+    rf_send(0, 5,17);
+    delayMicroseconds(200);
+    rf_send(0, 4,14);
+  }
+  else if (AutoCode == "sunProtect")
+  {
+    rf_send(1, 8,26);
+    delayMicroseconds(26000000);
+    rf_send(0, 3, 9);
+    delayMicroseconds(6000000);
+    rf_send(0, 3,10);
+    delayMicroseconds(200);
+    rf_send(0, 2, 6);
+    delayMicroseconds(6000000);
+    rf_send(0, 2, 7);
+    delayMicroseconds(200);    
+    rf_send(0, 1, 3);
+    delayMicroseconds(6000000);
+    rf_send(0, 1, 4);
+    delayMicroseconds(200);
+    rf_send(0, 0, 0);
+    delayMicroseconds(6000000);
+    rf_send(0, 0, 1);  
+  }
+} 
